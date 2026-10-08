@@ -24,9 +24,12 @@ def do_nothing(fun):
 
 import csv
 
+root_path = "/".join(__file__.split("/")[:-2])
+print(root_path)
+
 
 def load_references():
-    with open("./CIE_xyz_1931_2deg.csv") as response_file:
+    with open(root_path + "/resources/CIE_xyz_1931_2deg.csv") as response_file:
         reader = csv.reader(response_file, delimiter=",")
         x, y, z = [], [], []
         for row in reader:
@@ -39,7 +42,7 @@ def load_references():
             .to(dtype=torch.double)
             .transpose(0, 1)
         )
-    with open("./CIE_std_illum_D65.csv") as d65_file:
+    with open(root_path + "/resources/CIE_std_illum_D65.csv") as d65_file:
         reader = csv.reader(d65_file, delimiter=",")
         vals = []
         for row in reader:
@@ -104,8 +107,6 @@ class Texture:
                 view_vec = view_vec / numpy.linalg.norm(view_vec)
                 other = other / numpy.linalg.norm(other)
                 angle_row.append(pi / 2 - acos(numpy.dot(view_vec, other)))
-                print(int((angle_row[-1] * 180 / pi) * 100) / 100, end="\t")
-            print()
             self.viewangles.append(angle_row)
         self.illum = d65
 
