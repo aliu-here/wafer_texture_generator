@@ -9,6 +9,8 @@ from tmm_fast import coh_tmm
 from mat_defs import ior_dict
 from collections import deque
 from collections.abc import Callable
+import itertools
+import warnings
 
 COLORPY_RANGE = (380, 780 + 1)
 
@@ -55,29 +57,25 @@ def get_ior_over_wavelengths(start: int, end: int, func: Callable[[int], complex
 
 
 class Texture:
-    def __init__(self, w=32, h=32, base_mat="Si"):
+    def __init__(self, w=32, h=32, base_mat="si"):
         self.mats = []
         self.thicknesses = []
 
         self.top_bottom_layer = deque(["air"])
         self.top_bottom_thickness = deque([inf])
+        self.padding_layer = deque(["air"])
+        self.padding_layer_thickness = deque([1.0])
 
-        self.not_total_covered = []
-        self.percent_covered = []
-        self.alt_mat = []
         self.w = w
         self.h = h
 
         self.viewangles = []
 
-        self.view_pos = numpy.array([32, 32, -6])
+        self.view_pos = numpy.array([32, 32, -32])
         for row in range(self.h):
             angle_row = []
             mats = []
             thicknesses = []
-            not_total_covered = []
-            percent_covered = []
-            alt_mat = []
             for px in range(self.w):
                 coord = numpy.array([row + 0.5, px + 0.5, 0])
                 view_vec = coord - self.view_pos
@@ -87,7 +85,7 @@ class Texture:
                 other = other / numpy.linalg.norm(other)
                 angle_row.append(pi / 2 - acos(numpy.dot(view_vec, other)))
 
-                mats.append(deque(["Si"]))
+                mats.append(deque([base_mat]))
                 thicknesses.append(
                     deque(
                         [
@@ -95,20 +93,78 @@ class Texture:
                         ]
                     )
                 )
-                not_total_covered.append(deque([0, 0, 0]))
-                percent_covered.append(1)
-                alt_mat.append(deque(["air", "air", "air"]))
             self.viewangles.append(angle_row)
             self.mats.append(mats)
             self.thicknesses.append(thicknesses)
-            self.not_total_covered.append(not_total_covered)
-            self.percent_covered.append(percent_covered)
-            self.alt_mat.append(alt_mat)
 
         self.illum = d65
 
+    def calc_spectra(self):
+        all_iors = []
+        all_thicknesses = []
+        all_thetas = []
+        locations = []
+        max_ior_num = 0
+        for row in range(self.h):
+            for px in range(self.w):
+                max_ior_num = max(max_ior_num, len(self.mats[row][px]))
+        for row in range(self.h):
+            for px in range(self.w):
+                locations.append((row, px))
+                ior_funcs = [
+                    ior_dict[mat.lower()]
+                    for mat in self.top_bottom_layer
+                    + self.padding_layer * (max_ior_num - len(self.mats[row][px]))
+                    + self.mats[row][px]
+                    + self.top_bottom_layer
+                ]
+
+                iors = []
+                for ior_func in ior_funcs:
+                    material_indices = get_ior_over_wavelengths(
+                        COLORPY_RANGE[0], COLORPY_RANGE[1], ior_func
+                    )
+                    iors.append(material_indices)
+                all_iors.append(iors)
+                all_thicknesses.append(
+                    self.top_bottom_thickness
+                    + self.padding_layer_thickness
+                    * (max_ior_num - len(self.mats[row][px]))
+                    + self.thicknesses[row][px]
+                    + self.top_bottom_thickness
+                )
+                all_thetas.append(
+                    [[self.viewangles[row][px]] * (COLORPY_RANGE[1] - COLORPY_RANGE[0])]
+                )
+        all_iors = torch.tensor(all_iors)
+        all_thicknesses = torch.tensor(all_thicknesses)
+        all_thetas = torch.tensor(all_thetas)
+        wavelengths = torch.arange(COLORPY_RANGE[0], COLORPY_RANGE[1])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            spectra = (
+                coh_tmm("p", all_iors, all_thicknesses, all_thetas, wavelengths)["R"]
+                + coh_tmm("s", all_iors, all_thicknesses, all_thetas, wavelengths)["R"]
+            ) / 2
+
+        return spectra, locations
+
+
+class Wafer:
+    def __init__(self, w=32, h=32):
+        self.w = w
+        self.h = h
+        self.base_tex = Texture(w, h)
+        self.exposed_tex = Texture(w, h)
+        self.weighting = torch.zeros((32, 32))
+
+    def out_circle(self, row, px):
+        return ((row + 0.5) - self.h / 2) ** 2 + ((px + 0.5) - self.w / 2) ** 2 > (
+            (self.h + self.w) / 4 - 2
+        ) ** 2
+
     def calc_rgb_from_spectra(self, spectra):
-        spectra *= self.illum.tile((spectra.shape[0], 1, 1))
+        spectra *= d65.tile((spectra.shape[0], 1, 1))
         xyz = torch.matmul(spectra, response_funcs).transpose(-1, -2) / N
         rgb = (
             torch.matmul(
@@ -126,148 +182,111 @@ class Texture:
         )
         return rgb
 
-    def in_circle(self, row, px):
-        return ((row + 0.5) - self.h / 2) ** 2 + ((px + 0.5) - self.w / 2) ** 2 > (
-            (self.h + self.w) / 4
-        ) ** 2
-
-    def calc_spectra(self):
-        all_iors = []
-        all_thicknesses = []
-        all_thetas = []
-        locations = []
-
-        not_total_covered_indices = []
-        not_total_covered_iors = []
-        not_total_covered_thicknesses = []
-        not_total_covered_percents = []
-        for row in range(self.h):
-            for px in range(self.w):
-                if self.in_circle(row, px):
-                    continue
-                locations.append((px, row))
-                ior_funcs = [
-                    ior_dict[mat.lower()]
-                    for mat in self.top_bottom_layer
-                    + self.mats[row][px]
-                    + self.top_bottom_layer
-                ]
-
-                iors = []
-                for ior_func in ior_funcs:
-                    material_indices = get_ior_over_wavelengths(
-                        COLORPY_RANGE[0], COLORPY_RANGE[1], ior_func
-                    )
-                    iors.append(material_indices)
-                all_iors.append(iors)
-                all_thicknesses.append(
-                    self.top_bottom_thickness
-                    + self.thicknesses[row][px]
-                    + self.top_bottom_thickness
-                )
-                all_thetas.append(
-                    [[self.viewangles[row][px]] * (COLORPY_RANGE[1] - COLORPY_RANGE[0])]
-                )
-
-                if sum(self.not_total_covered[row][px]) != 0:
-                    not_total_covered_indices.append(len(locations) - 1)
-                    ior_funcs = [
-                        ior_dict[mat.lower()]
-                        if not_total_covered == 0
-                        else ior_dict[alt_mat]
-                        for not_total_covered, mat, alt_mat in zip(
-                            self.not_total_covered[row][px],
-                            self.mats[row][px],
-                            self.alt_mat[row][px],
-                        )
-                    ]
-                    ior_vals = []
-                    for ior_func in ior_funcs:
-                        material_indices = get_ior_over_wavelengths(
-                            COLORPY_RANGE[0], COLORPY_RANGE[1], ior_func
-                        )
-                        ior_vals.append(material_indices)
-                    not_total_covered_iors.append(ior_vals)
-                    not_total_covered_thicknesses.append(self.thicknesses[row][px])
-                    not_total_covered_percents.append(self.percent_covered[row][px])
-        all_iors += not_total_covered_iors
-        all_thicknesses += not_total_covered_thicknesses
-        wavelengths = torch.arange(COLORPY_RANGE[0], COLORPY_RANGE[1])
-        spectra = (
-            coh_tmm("p", all_iors, all_thicknesses, all_thetas, wavelengths)["R"]
-            + coh_tmm("s", all_iors, all_thicknesses, all_thetas, wavelengths)["R"]
-        ) / 2
-
-        if len(not_total_covered_indices) > 0:
-            spectra, not_covered = spectra.split(len(locations))
-            for index, spectrum, percent in zip(
-                not_total_covered_indices, not_covered, not_total_covered_percents
-            ):
-                spectra[index] = spectra[index] * (1 - percent) + spectrum * percent
-        return spectra, locations
-
     def render(self):
-        out_pixels = Image.new("RGBA", (self.w, self.h), (0, 0, 0, 0))
+        base_spec, locs = self.base_tex.calc_spectra()
+        exposed_spec, _ = self.exposed_tex.calc_spectra()
 
-        spectra, locations = self.calc_spectra()
+        spec = base_spec * (
+            torch.ones((self.w * self.h, 1, 1))
+            - self.weighting.flatten().reshape(self.w * self.h, 1, 1)
+        ) + exposed_spec * self.weighting.flatten().reshape(self.w * self.h, 1, 1)
 
-        rgb = self.calc_rgb_from_spectra(spectra)
-        for pos, color in zip(locations, rgb):
-            out_pixels.putpixel(pos, tuple([round(x) for x in color.tolist()]))
-        return out_pixels
+        tex = Image.new("RGBA", (self.w, self.h))
 
-    def deposit_layer(self, material, thickness, mask=None):
-        """expects material as a string, thickness as an int/float (in nm), and mask as a PIL image in RGBA format"""
+        colors = self.calc_rgb_from_spectra(spec)
+
+        for rgb, loc in zip(colors, locs):
+            if self.out_circle(loc[0], loc[1]):
+                continue
+            tex.putpixel(
+                (loc[1], loc[0]), tuple([int(x) for x in rgb.tolist()] + [255])
+            )
+        return tex
+
+    def deposit_layer(self, material, thickness):
         for row in range(self.h):
             for px in range(self.w):
-                if ((row + 0.5) - self.h / 2) ** 2 + ((px + 0.5) - self.w / 2) ** 2 > (
-                    (self.h + self.w) / 4
-                ) ** 2:
-                    continue
-                self.mats[row][px].appendleft(material)
-                self.thicknesses[row][px].appendleft(thickness)
-                self.not_total_covered[row][px].appendleft(0)
-                self.alt_mat[row][px][0] = "air"
-        if mask:
-            self.mod_top_layer(mask, "air")
+                self.base_tex.mats[row][px].appendleft(material)
+                self.base_tex.thicknesses[row][px].appendleft(thickness)
+                self.exposed_tex.mats[row][px].appendleft(material)
+                self.exposed_tex.thicknesses[row][px].appendleft(thickness)
 
-    def mod_top_layer(self, mask, changed_material):
+    def mod_layer(self, material, alt_material, mask):
         for row in range(self.h):
             for px in range(self.w):
-                percent_covered = mask.getpixel((row, px))[4] / 255
-                if percent_covered != 0:
-                    self.not_total_covered[row][px][0] = 1
-                    self.percent_covered[row][px] = (
-                        percent_covered  # this is fine since the mask texture stays the same the whole time
-                    )
-                    self.alt_mat[row][px][0] = changed_material
+                if (
+                    mask.getpixel((px, row))[3] != 0
+                ):  # bc we're doing fractions of the full texture, don't overwrite if
+                    # there's no pattern there since there might be one from an earlier
+                    # patterning step
+                    self.weighting[row][px] = mask.getpixel((px, row))[3] / 255
+                    if self.exposed_tex.mats[row][px][0] == material:
+                        self.exposed_tex.mats[row][px][0] = alt_material
 
-    def remove_layer(self, material):
+    def grow_layer(self, material, thickness, substrates: str | list[str]):
+        if type(substrates) == str:
+            substrates = [substrates]
         for row in range(self.h):
             for px in range(self.w):
-                if ((row + 0.5) - self.h / 2) ** 2 + ((px + 0.5) - self.w / 2) ** 2 > (
-                    (self.h + self.w) / 4
-                ) ** 2:
-                    continue
-                index = self.mats[row][px].index(material)
-                self.mats[row][px] = self.mats[row][px][index + 1 :]
-                self.thicknesses[row][px] = self.thicknesses[row][px][index + 1 :]
-                self.not_total_covered[row][px] = self.not_total_covered[row][px][
-                    index + 1 :
-                ]
+                if self.base_tex.mats[row][px][0] in substrates:
+                    self.base_tex.mats[row][px].appendleft(material)
+                    self.base_tex.thicknesses[row][px].appendleft(thickness)
+                if self.exposed_tex.mats[row][px][0] in substrates:
+                    self.exposed_tex.mats[row][px].appendleft(material)
+                    self.exposed_tex.thicknesses[row][px].appendleft(thickness)
 
+    def remove_layer(self, material, etching=True):
+        for row in range(self.h):
+            for px in range(self.w):
+                if etching:
+                    if self.base_tex.mats[row][px][0] == material:
+                        self.base_tex.mats[row][px] = deque(
+                            itertools.islice(self.base_tex.mats[row][px], 1, None)
+                        )
+                        self.base_tex.thicknesses[row][px] = deque(
+                            itertools.islice(
+                                self.base_tex.thicknesses[row][px], 1, None
+                            )
+                        )
+                    if self.exposed_tex.mats[row][px][0] == material:
+                        self.exposed_tex.mats[row][px] = deque(
+                            itertools.islice(self.exposed_tex.mats[row][px], 1, None)
+                        )
+                        self.exposed_tex.thicknesses[row][px] = deque(
+                            itertools.islice(
+                                self.exposed_tex.thicknesses[row][px], 1, None
+                            )
+                        )
+                else:  # hang on i have to water the shitcode
+                    try:
+                        idx = self.base_tex.mats[row][px].index(material)
+                        self.base_tex.mats[row][px] = deque(
+                            itertools.islice(self.base_tex.mats[row][px], idx + 1, None)
+                        )
+                        self.base_tex.thicknesses[row][px] = deque(
+                            itertools.islice(
+                                self.base_tex.thicknesses[row][px], idx + 1, None
+                            )
+                        )
+                    except ValueError:
+                        pass  # dgaf if can't find
 
-def gaussian(peak_val, mean, stddev):
-    return lambda x: peak_val * exp(-((x - mean) ** 2) / (2 * stddev**2))
-
-
-def red_tint(in_fn: Callable[[int], complex]):
-    return lambda x: in_fn(x) + gaussian(0, 400, 100)(x)
+                    try:
+                        idx = self.exposed_tex.mats[row][px].index(material)
+                        self.exposed_tex.mats[row][px] = deque(
+                            itertools.islice(
+                                self.exposed_tex.mats[row][px], idx + 1, None
+                            )
+                        )
+                        self.exposed_tex.thicknesses[row][px] = deque(
+                            itertools.islice(
+                                self.exposed_tex.thicknesses[row][px], idx + 1, None
+                            )
+                        )
+                    except ValueError:
+                        pass
 
 
 if __name__ == "__main__":
-    tex = Texture(32, 32)
-    start = time.time()
-    img = tex.render()
-    print(f"render time: {time.time() - start}")
-    img.show()
+    tex = Wafer(32, 32)
+    tex.render().show()
