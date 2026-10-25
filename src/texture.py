@@ -151,11 +151,11 @@ class Texture:
 
 
 class Wafer:
-    def __init__(self, w=32, h=32):
+    def __init__(self, w=32, h=32, mat="si"):
         self.w = w
         self.h = h
-        self.base_tex = Texture(w, h)
-        self.exposed_tex = Texture(w, h)
+        self.base_tex = Texture(w, h, mat)
+        self.exposed_tex = Texture(w, h, mat)
         self.weighting = torch.zeros((32, 32))
 
     def out_circle(self, row, px):
@@ -219,9 +219,23 @@ class Wafer:
                 ):  # bc we're doing fractions of the full texture, don't overwrite if
                     # there's no pattern there since there might be one from an earlier
                     # patterning step
-                    self.weighting[row][px] = mask.getpixel((px, row))[3] / 255
+                    if self.weighting[row][px] == 0:
+                        self.weighting[row][px] = mask.getpixel((px, row))[3] / 255
                     if self.exposed_tex.mats[row][px][0] == material:
                         self.exposed_tex.mats[row][px][0] = alt_material
+
+    def replace_layer(self, material, alt_material, new_thickness):
+        for row in range(self.h):
+            for px in range(self.w):
+                for layer in range(len(self.exposed_tex.mats[row][px])):
+                    if self.exposed_tex.mats[row][px][0] == material:
+                        self.exposed_tex.mats[row][px][0] = alt_material
+                        self.exposed_tex.thicknesses[row][px][0] = new_thickness
+
+                for layer in range(len(self.base_tex.mats[row][px])):
+                    if self.base_tex.mats[row][px][0] == material:
+                        self.base_tex.mats[row][px][0] = alt_material
+                        self.base_tex.thicknesses[row][px][0] = new_thickness
 
     def grow_layer(self, material, thickness, substrates: str | list[str]):
         if type(substrates) == str:
@@ -231,7 +245,10 @@ class Wafer:
                 if self.base_tex.mats[row][px][0] in substrates:
                     self.base_tex.mats[row][px].appendleft(material)
                     self.base_tex.thicknesses[row][px].appendleft(thickness)
-                if self.exposed_tex.mats[row][px][0] in substrates:
+                if self.exposed_tex.mats[row][px][0] in substrates and (
+                    self.base_tex.mats[row][px][0] in substrates
+                    or self.weighting[row][px] > 0
+                ):
                     self.exposed_tex.mats[row][px].appendleft(material)
                     self.exposed_tex.thicknesses[row][px].appendleft(thickness)
 

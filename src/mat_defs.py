@@ -59,6 +59,26 @@ ior_dict = {
             ior_dict["si"](wavelength) + gaussian(2, 450, 300)(wavelength)
         )
     ),
+    "p_doped_si_drive_in": functools.lru_cache(402)(
+        lambda wavelength: (
+            ior_dict["si"](wavelength) + gaussian(4, 750, 300)(wavelength)
+        )
+    ),
+    "n_doped_si_drive_in": functools.lru_cache(402)(
+        lambda wavelength: (
+            ior_dict["si"](wavelength) + gaussian(4, 450, 300)(wavelength)
+        )
+    ),
+    "slight_doped_n_si": functools.lru_cache(402)(
+        lambda wavelength: (
+            ior_dict["si"](wavelength) + gaussian(0.5, 450, 300)(wavelength)
+        )
+    ),
+    "slight_doped_p_si": functools.lru_cache(402)(
+        lambda wavelength: (
+            ior_dict["si"](wavelength) + gaussian(0.5, 750, 300)(wavelength)
+        )
+    ),
     "air": get_complex_ior_fn(
         RefractiveIndexMaterial(shelf="other", book="air", page="Ciddor")
     ),
@@ -84,5 +104,20 @@ ior_dict = {
     ),
     "al2o3": get_complex_ior_fn(
         RefractiveIndexMaterial(shelf="main", book="Al2O3", page="Boidin")
+    ),
+    "phosphosilicate_glass": lambda wavelength: (
+        get_complex_ior_fn(
+            RefractiveIndexMaterial(shelf="glass", book="fused_silica", page="Malitson")
+        )(wavelength)
+        + gaussian(0.5, 450, 300)(wavelength)
+    ),
+    "titanium_nitride": get_complex_ior_fn(
+        RefractiveIndexMaterial(shelf="main", book="TiN", page="Schnabel")
+    ),
+    "platinum": get_complex_ior_fn(
+        RefractiveIndexMaterial(shelf="main", book="Pt", page="Werner")
+    ),
+    "ptsi": lambda wavelength: (
+        ior_dict["platinum"](wavelength) * 0.5 + ior_dict["si"](wavelength) * 0.5
     ),
 }
