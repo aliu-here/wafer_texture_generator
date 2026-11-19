@@ -149,6 +149,27 @@ class Texture:
 
         return spectra, locations
 
+    def defrag(self):
+        for row in range(self.h):
+            for px in range(self.w):
+                out_mats = deque()
+                out_thicknesses = deque()
+                curr_mat = self.mats[row][px][0]
+                curr_thickness = self.thicknesses[row][px][0]
+                for layer in range(1, len(self.mats[row][px])):
+                    if self.mats[row][px][layer] == curr_mat:
+                        curr_thickness += self.thicknesses[row][px][layer]
+                    else:
+                        out_mats.append(curr_mat)
+                        out_thicknesses.append(curr_thickness)
+
+                        curr_mat = self.mats[row][px][layer]
+                        curr_thickness = self.thicknesses[row][px][layer]
+                out_mats.append(curr_mat)
+                out_thicknesses.append(curr_thickness)
+                self.mats[row][px] = out_mats
+                self.thicknesses[row][px] = out_thicknesses
+
 
 class Wafer:
     def __init__(self, w=32, h=32, mat="si"):
@@ -194,13 +215,22 @@ class Wafer:
         tex = Image.new("RGBA", (self.w, self.h))
 
         colors = self.calc_rgb_from_spectra(spec)
-
         for rgb, loc in zip(colors, locs):
             if self.out_circle(loc[0], loc[1]):
                 continue
-            tex.putpixel(
-                (loc[1], loc[0]), tuple([int(x) for x in rgb.tolist()] + [255])
-            )
+            try:
+                tex.putpixel(
+                    (loc[1], loc[0]),
+                    tuple([int(x) for x in rgb.tolist()] + [255]),
+                )
+            except ValueError:
+                print(
+                    loc,
+                    self.base_tex.mats[loc[0]][loc[1]],
+                    self.exposed_tex.mats[loc[0]][loc[1]],
+                )
+                print(rgb)
+                raise ValueError
         return tex
 
     def deposit_layer(self, material, thickness):
@@ -210,6 +240,8 @@ class Wafer:
                 self.base_tex.thicknesses[row][px].appendleft(thickness)
                 self.exposed_tex.mats[row][px].appendleft(material)
                 self.exposed_tex.thicknesses[row][px].appendleft(thickness)
+        self.base_tex.defrag()
+        self.exposed_tex.defrag()
 
     def mod_layer(self, material, alt_material, mask):
         for row in range(self.h):
@@ -237,71 +269,111 @@ class Wafer:
                         self.base_tex.mats[row][px][0] = alt_material
                         self.base_tex.thicknesses[row][px][0] = new_thickness
 
-    def grow_layer(self, material, thickness, substrates: str | list[str]):
+    def grow_layer(
+        self,
+        material,
+        thickness,
+        substrates: str | list[str] | None = None,
+        avoid: bool = False,
+    ):
+        if not substrates:
+            substrates = [
+                "slight_doped_p_si",
+                "slight_doped_n_si",
+                "p_doped_si",
+                "n_doped_si",
+                "p_doped_si_drive_in",
+                "n_doped_si_drive_in",
+                "si",
+            ]
         if type(substrates) == str:
             substrates = [substrates]
         for row in range(self.h):
             for px in range(self.w):
-                if self.base_tex.mats[row][px][0] in substrates:
+                if (
+                    self.base_tex.mats[row][px][0] in substrates
+                    and not avoid
+                    or (self.base_tex.mats[row][px][0] not in substrates and avoid)
+                ):
                     self.base_tex.mats[row][px].appendleft(material)
                     self.base_tex.thicknesses[row][px].appendleft(thickness)
-                if self.exposed_tex.mats[row][px][0] in substrates and (
-                    self.base_tex.mats[row][px][0] in substrates
-                    or self.weighting[row][px] > 0
+                if (
+                    self.exposed_tex.mats[row][px][0] in substrates
+                    and not avoid
+                    or (self.exposed_tex.mats[row][px][0] not in substrates and avoid)
                 ):
                     self.exposed_tex.mats[row][px].appendleft(material)
                     self.exposed_tex.thicknesses[row][px].appendleft(thickness)
 
-    def remove_layer(self, material, etching=True):
+    def _remove_layer_px(self, tex: Texture, row, px, material, liftoff=False):
+        if liftoff:
+            try:
+                idx = tex.mats[row][px].index(material)
+                tex.mats[row][px] = deque(
+                    itertools.islice(tex.mats[row][px], idx + 1, None)
+                )
+                tex.thicknesses[row][px] = deque(
+                    itertools.islice(tex.thicknesses[row][px], idx + 1, None)
+                )
+            except ValueError:
+                pass  # dgaf if can't find
+        else:
+            if tex.mats[row][px][0] == material:
+                tex.mats[row][px].popleft()
+                tex.thicknesses[row][px].popleft()
+
+    def remove_layer(self, material, liftoff=False):
         for row in range(self.h):
             for px in range(self.w):
-                if etching:
-                    if self.base_tex.mats[row][px][0] == material:
-                        self.base_tex.mats[row][px] = deque(
-                            itertools.islice(self.base_tex.mats[row][px], 1, None)
-                        )
-                        self.base_tex.thicknesses[row][px] = deque(
-                            itertools.islice(
-                                self.base_tex.thicknesses[row][px], 1, None
-                            )
-                        )
-                    if self.exposed_tex.mats[row][px][0] == material:
-                        self.exposed_tex.mats[row][px] = deque(
-                            itertools.islice(self.exposed_tex.mats[row][px], 1, None)
-                        )
-                        self.exposed_tex.thicknesses[row][px] = deque(
-                            itertools.islice(
-                                self.exposed_tex.thicknesses[row][px], 1, None
-                            )
-                        )
-                else:  # hang on i have to water the shitcode
-                    try:
-                        idx = self.base_tex.mats[row][px].index(material)
-                        self.base_tex.mats[row][px] = deque(
-                            itertools.islice(self.base_tex.mats[row][px], idx + 1, None)
-                        )
-                        self.base_tex.thicknesses[row][px] = deque(
-                            itertools.islice(
-                                self.base_tex.thicknesses[row][px], idx + 1, None
-                            )
-                        )
-                    except ValueError:
-                        pass  # dgaf if can't find
+                self._remove_layer_px(self.base_tex, row, px, material, liftoff)
+                self._remove_layer_px(self.exposed_tex, row, px, material, liftoff)
 
-                    try:
-                        idx = self.exposed_tex.mats[row][px].index(material)
-                        self.exposed_tex.mats[row][px] = deque(
-                            itertools.islice(
-                                self.exposed_tex.mats[row][px], idx + 1, None
-                            )
-                        )
-                        self.exposed_tex.thicknesses[row][px] = deque(
-                            itertools.islice(
-                                self.exposed_tex.thicknesses[row][px], idx + 1, None
-                            )
-                        )
-                    except ValueError:
-                        pass
+    def etch_layer(self, material, etch_amt):
+        for row in range(self.h):
+            for px in range(self.w):
+                if self.base_tex.mats[row][px][0] == material:
+                    self.base_tex.thicknesses[row][px][0] *= etch_amt
+                if self.exposed_tex.mats[row][px][0] == material:
+                    self.exposed_tex.thicknesses[row][px][0] *= etch_amt
+
+    def _etch_layer_thickness_px(self, tex: Texture, row, px, etch_thickness, mat):
+        run_sum = 0
+        for i, thickness in enumerate(tex.thicknesses[row][px]):
+            if tex.mats[row][px][i] not in mat:
+                tex.thicknesses[row][px] = deque(
+                    itertools.islice(tex.thicknesses[row][px], i + 1, None)
+                )
+                tex.mats[row][px] = deque(
+                    itertools.islice(tex.mats[row][px], i + 1, None)
+                )
+            if run_sum + thickness >= etch_thickness:
+                tex.thicknesses[row][px] = deque(
+                    itertools.islice(tex.thicknesses[row][px], i, None)
+                )
+                tex.mats[row][px] = deque(itertools.islice(tex.mats[row][px], i, None))
+                tex.thicknesses[row][px][0] = etch_thickness - run_sum
+                break
+            run_sum += thickness
+
+    def etch_layer_thickness(self, etch_thickness, mat: None | list = None):
+        if not mat:  # just assume etching silicon
+            mat = [
+                "slight_doped_p_si",
+                "slight_doped_n_si",
+                "p_doped_si",
+                "n_doped_si",
+                "p_doped_si_drive_in",
+                "n_doped_si_drive_in",
+                "si",
+            ]
+        for row in range(self.h):
+            for px in range(self.w):
+                self._etch_layer_thickness_px(
+                    self.base_tex, row, px, etch_thickness, mat
+                )
+                self._etch_layer_thickness_px(
+                    self.exposed_tex, row, px, etch_thickness, mat
+                )
 
 
 if __name__ == "__main__":
