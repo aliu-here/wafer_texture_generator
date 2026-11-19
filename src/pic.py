@@ -1,7 +1,6 @@
 from texture import Wafer, root_path
 from PIL import Image
-import misc_utils
-from .utils import lithography, doping
+from utils import lithography, doping, misc_utils
 import copy
 
 
@@ -133,7 +132,7 @@ def gen_lpic(wafer):
     misc_utils.save_img(wafer, "bjt_lpic.step_ten")
     lithography.gen_photolithography(
         wafer,
-        misc_utils.get_fraction_of_pattern(pattern, 3, [2]),
+        misc_utils.get_fraction_of_pattern(pattern, 1, [0]),
         "novolac_resist",
         "bjt_lpic.step_ten",
         "bjt_lpic.step_eleven",

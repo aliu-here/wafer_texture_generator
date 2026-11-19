@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from math import exp
+from operator import ior
 from refractiveindex import RefractiveIndexMaterial
 
 import functools
@@ -28,7 +29,14 @@ def get_complex_ior_fn(
         get_n = lambda a: 0
     else:
         get_n = lambda a: ior.get_refractive_index(a)
-    tmp = lambda a: get_n(a) + get_k(a) * 1j
+    wl_range = ior.get_wl_range(unit="nm")
+    tmp = lambda a: (  # horrific kludge
+        get_n(a) + get_k(a) * 1j
+        if a >= wl_range[0] and a <= wl_range[1]
+        else get_n(wl_range[0]) + get_k(wl_range[0]) * 1j
+        if a < wl_range[0]
+        else get_n(wl_range[1]) + get_k(wl_range[1]) * 1j
+    )
     return functools.lru_cache(402)(mod_fn(tmp))  # cachemaxxing
 
 
@@ -99,6 +107,38 @@ ior_dict = {
             + gaussian(3, 700, 200)(wavelength)
         )
     ),
+    "methacrylate_resist": functools.lru_cache(402)(
+        lambda wavelength: (
+            get_complex_ior_fn(
+                RefractiveIndexMaterial(
+                    shelf="other", book="Microchem495", page="specs"
+                )
+            )(wavelength)
+            + gaussian(1, 450, 200)(wavelength)
+        )
+    ),
+    "exposed_methacrylate_resist": functools.lru_cache(402)(
+        lambda wavelength: (
+            gaussian(1, 700, 200)(wavelength)
+            + ior_dict["methacrylate_resist"](wavelength)
+        )
+    ),
+    "methacrylate_resist_trilayer": functools.lru_cache(402)(
+        lambda wavelength: (
+            get_complex_ior_fn(
+                RefractiveIndexMaterial(
+                    shelf="other", book="Microchem495", page="specs"
+                )
+            )(wavelength)
+            + gaussian(1, 450, 200)(wavelength)
+        )
+    ),
+    "exposed_methacrylate_resist_trilayer": functools.lru_cache(402)(
+        lambda wavelength: (
+            gaussian(1, 700, 200)(wavelength)
+            + ior_dict["methacrylate_resist"](wavelength)
+        )
+    ),
     "al": get_complex_ior_fn(
         RefractiveIndexMaterial(shelf="main", book="Al", page="Cheng")
     ),
@@ -117,7 +157,100 @@ ior_dict = {
     "platinum": get_complex_ior_fn(
         RefractiveIndexMaterial(shelf="main", book="Pt", page="Werner")
     ),
-    "ptsi": lambda wavelength: (
-        ior_dict["platinum"](wavelength) * 0.5 + ior_dict["si"](wavelength) * 0.5
+    "ptsi": functools.lru_cache(402)(
+        lambda wavelength: (
+            ior_dict["platinum"](wavelength) * 0.5 + ior_dict["si"](wavelength) * 0.5
+        )
+    ),
+    "hfo2": get_complex_ior_fn(
+        RefractiveIndexMaterial(shelf="main", book="HfO2", page="Franta")
+    ),
+    "silicon_oxynitride": functools.lru_cache(402)(
+        lambda wavelength: (
+            ior_dict["si3n4"](wavelength) * 0.5 + ior_dict["sio2"](wavelength) * 0.5
+        )
+    ),
+    "spin_on_carbon": get_complex_ior_fn(
+        RefractiveIndexMaterial(shelf="main", book="C", page="Larruquert")
+    ),
+    "ash": get_complex_ior_fn(
+        RefractiveIndexMaterial(shelf="other", book="propane_soot", page="Dlazell")
+    ),
+    "sige": get_complex_ior_fn(
+        RefractiveIndexMaterial(shelf="other", book="Si-Ge", page="Jellison-48")
+    ),
+    "slight_doped_p_sige": functools.lru_cache(402)(
+        lambda wavelength: (
+            ior_dict["sige"](wavelength) + gaussian(0.5, 750, 300)(wavelength)
+        )
+    ),
+    "p_doped_sige": functools.lru_cache(402)(
+        lambda wavelength: (
+            ior_dict["sige"](wavelength) + gaussian(2, 750, 300)(wavelength)
+        )
+    ),
+    "ni": get_complex_ior_fn(
+        RefractiveIndexMaterial(shelf="main", book="Ni", page="Werner")
+    ),
+    "nisi": functools.lru_cache(402)(
+        lambda wavelength: (
+            ior_dict["si"](wavelength) * 1 / 2 + ior_dict["ni"](wavelength) * 1 / 2
+        )
+    ),
+    "ni2si": functools.lru_cache(402)(
+        lambda wavelength: (
+            ior_dict["si"](wavelength) * 1 / 3 + ior_dict["ni"](wavelength) * 2 / 3
+        )
+    ),
+    "tungsten": get_complex_ior_fn(
+        RefractiveIndexMaterial(shelf="main", book="W", page="Werner-DFT")
+    ),
+    "polyhydroxystyrene_resist_trilayer": functools.lru_cache(402)(
+        lambda wavelength: (
+            exponential(0.75, 2)(wavelength) + gaussian(0.2, 500, 200)(wavelength)
+        )
+    ),
+    "exposed_polyhydroxystyrene_resist_trilayer": functools.lru_cache(402)(
+        lambda wavelength: (
+            multiply_by_val(1 / 3)(ior_dict["novolac_resist"])(wavelength)
+            + gaussian(2, 700, 200)(wavelength)
+        )
+    ),
+    "silicon_carbide": get_complex_ior_fn(
+        RefractiveIndexMaterial(shelf="main", book="SiC", page="Larruquert")
+    ),
+    "silicon_oxycarbide_hydride": functools.lru_cache(402)(
+        lambda wavelength: (
+            ior_dict["silicon_carbide"](wavelength).real
+            + ior_dict["silicon_carbide"](wavelength).imag * 0.2
+        )
+    ),
+    "tantalum_nitride": functools.lru_cache(402)(
+        lambda wavelength: (
+            exponential(0.75, 2)(wavelength) + gaussian(0.2, 600, 100)(wavelength)
+        )
+    ),
+    "tantalum": get_complex_ior_fn(
+        RefractiveIndexMaterial(shelf="main", book="Ta", page="Werner")
+    ),
+    "copper": get_complex_ior_fn(
+        RefractiveIndexMaterial(shelf="main", book="Cu", page="McPeak")
+    ),
+    "ti": get_complex_ior_fn(
+        RefractiveIndexMaterial(shelf="main", book="Ti", page="Palm")
+    ),
+    "alti": functools.lru_cache(402)(
+        lambda wavelength: (
+            ior_dict["al"](wavelength) * 1 / 2 + ior_dict["ti"](wavelength) * 1 / 2
+        )
+    ),
+    "chromium": get_complex_ior_fn(
+        RefractiveIndexMaterial(shelf="main", book="Cr", page="Johnson")
+    ),
+    "tin": get_complex_ior_fn(
+        RefractiveIndexMaterial(shelf="main", book="Sn", page="Golovashkin-293K")
+    ),
+    "polysilicon": get_complex_ior_fn(
+        RefractiveIndexMaterial(shelf="main", book="Si", page="Pierce")
     ),
 }

@@ -1,7 +1,6 @@
 from texture import Wafer, root_path
 from PIL import Image
-import misc_utils
-from .utils import lithography, doping
+from utils import lithography, doping, misc_utils
 import copy
 
 
@@ -24,7 +23,7 @@ def gen_nmos_textures(item_name, nmos_base_copy: Wafer):
     misc_utils.save_img(nmos_base_copy, f"{item_name}.step_four")
     doping.dope_surface(nmos_base_copy, "p")
     misc_utils.save_img(nmos_base_copy, f"{item_name}.step_five")
-    nmos_base_copy.grow_layer("sio2", 400, ["si", "p_doped_si", "n_doped_si"])
+    nmos_base_copy.grow_layer("sio2", 400)
     misc_utils.save_img(nmos_base_copy, f"{item_name}.step_six")
     nmos_base_copy.remove_layer("si3n4")
     misc_utils.save_img(nmos_base_copy, f"{item_name}.step_seven")
@@ -43,7 +42,7 @@ def gen_nmos_textures(item_name, nmos_base_copy: Wafer):
     misc_utils.save_img(nmos_base_copy, f"{item_name}.step_ten")
 
     pattern3 = misc_utils.get_fraction_of_pattern(pattern, 5, [1], True)
-    nmos_base_copy.grow_layer("sio2", 40, ["si", "p_doped_si", "n_doped_si"])
+    nmos_base_copy.grow_layer("sio2", 40)
     misc_utils.save_img(nmos_base_copy, f"{item_name}.step_eleven")
     nmos_base_copy.deposit_layer("si", 800)
     misc_utils.save_img(nmos_base_copy, f"{item_name}.step_twelve")
@@ -114,13 +113,13 @@ def gen_nmos_dram(nmos_base_copy: Wafer):  # thanks planetme code organization
     misc_utils.save_img(nmos_base_copy, f"{item_name}.step_four")
     doping.dope_surface(nmos_base_copy, "p")
     misc_utils.save_img(nmos_base_copy, f"{item_name}.step_five")
-    nmos_base_copy.grow_layer("sio2", 400, ["si", "p_doped_si", "n_doped_si"])
+    nmos_base_copy.grow_layer("sio2", 400)
     misc_utils.save_img(nmos_base_copy, f"{item_name}.step_six")
     nmos_base_copy.remove_layer("si3n4")
     misc_utils.save_img(nmos_base_copy, f"{item_name}.step_seven")
 
     pattern3 = misc_utils.get_fraction_of_pattern(pattern, 4, [2], True)
-    nmos_base_copy.grow_layer("sio2", 40, ["si", "p_doped_si", "n_doped_si"])
+    nmos_base_copy.grow_layer("sio2", 40)
     misc_utils.save_img(nmos_base_copy, f"{item_name}.step_eight")
     nmos_base_copy.deposit_layer("si", 800)
     misc_utils.save_img(nmos_base_copy, f"{item_name}.step_nine")

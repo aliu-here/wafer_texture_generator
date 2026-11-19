@@ -1,6 +1,5 @@
-import nmos
-import pic
+import nmos, pic, cmos
 
-if __name__ == "__main__":
-    nmos.gen_all()
-    pic.gen_pic_base()
+nmos.gen_all()
+pic.gen_pic_base()
+cmos.gen_all()
